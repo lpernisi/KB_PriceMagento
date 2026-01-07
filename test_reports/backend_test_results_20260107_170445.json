@@ -1,0 +1,197 @@
+{
+  "timestamp": "2026-01-07T17:04:45.765482",
+  "summary": {
+    "total_tests": 11,
+    "passed_tests": 5,
+    "failed_tests": 6,
+    "success_rate": 45.45454545454545
+  },
+  "detailed_results": [
+    {
+      "test_name": "Root API Endpoint",
+      "endpoint": "",
+      "method": "GET",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_data": {
+        "message": "Magento Price Manager API",
+        "status": "running"
+      },
+      "error": null
+    },
+    {
+      "test_name": "Save Configuration",
+      "endpoint": "save-config",
+      "method": "POST",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_data": {
+        "success": true,
+        "message": "Configurazione salvata"
+      },
+      "error": null
+    },
+    {
+      "test_name": "Load Configuration",
+      "endpoint": "load-config",
+      "method": "GET",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_data": {
+        "success": true,
+        "config": {
+          "access_token": "test-token",
+          "magento_url": "https://test-store.com",
+          "updated_at": "2026-01-07T17:04:45.127401+00:00"
+        }
+      },
+      "error": null
+    },
+    {
+      "test_name": "Missing Magento URL",
+      "endpoint": "test-connection",
+      "method": "POST",
+      "expected_status": 422,
+      "actual_status": 422,
+      "success": true,
+      "response_data": {
+        "detail": [
+          {
+            "type": "missing",
+            "loc": [
+              "body",
+              "magento_url"
+            ],
+            "msg": "Field required",
+            "input": {
+              "access_token": "test-token"
+            },
+            "url": "https://errors.pydantic.dev/2.12/v/missing"
+          }
+        ]
+      },
+      "error": null
+    },
+    {
+      "test_name": "Missing Access Token",
+      "endpoint": "test-connection",
+      "method": "POST",
+      "expected_status": 422,
+      "actual_status": 422,
+      "success": true,
+      "response_data": {
+        "detail": [
+          {
+            "type": "missing",
+            "loc": [
+              "body",
+              "access_token"
+            ],
+            "msg": "Field required",
+            "input": {
+              "magento_url": "https://test-store.com"
+            },
+            "url": "https://errors.pydantic.dev/2.12/v/missing"
+          }
+        ]
+      },
+      "error": null
+    },
+    {
+      "test_name": "Empty Fields",
+      "endpoint": "test-connection",
+      "method": "POST",
+      "expected_status": 502,
+      "actual_status": 521,
+      "success": false,
+      "response_data": null,
+      "error": {
+        "detail": "Errore connessione: Request URL is missing an 'http://' or 'https://' protocol."
+      }
+    },
+    {
+      "test_name": "Test Connection - Invalid Data",
+      "endpoint": "test-connection",
+      "method": "POST",
+      "expected_status": 400,
+      "actual_status": 521,
+      "success": false,
+      "response_data": null,
+      "error": {
+        "detail": "Errore connessione: Request URL is missing an 'http://' or 'https://' protocol."
+      }
+    },
+    {
+      "test_name": "Test Connection - Valid Format",
+      "endpoint": "test-connection",
+      "method": "POST",
+      "expected_status": 502,
+      "actual_status": 521,
+      "success": false,
+      "response_data": null,
+      "error": {
+        "detail": "Errore connessione: [Errno -2] Name or service not known"
+      }
+    },
+    {
+      "test_name": "Store Views - Invalid Credentials",
+      "endpoint": "store-views",
+      "method": "POST",
+      "expected_status": 502,
+      "actual_status": 521,
+      "success": false,
+      "response_data": null,
+      "error": {
+        "detail": "Errore connessione: [Errno -2] Name or service not known"
+      }
+    },
+    {
+      "test_name": "Products - Invalid Credentials",
+      "endpoint": "products?store_id=0&page=1&page_size=10",
+      "method": "POST",
+      "expected_status": 502,
+      "actual_status": 521,
+      "success": false,
+      "response_data": null,
+      "error": {
+        "detail": "Errore connessione: [Errno -2] Name or service not known"
+      }
+    },
+    {
+      "test_name": "Update Price - Invalid Credentials",
+      "endpoint": "update-price",
+      "method": "POST",
+      "expected_status": 502,
+      "actual_status": 422,
+      "success": false,
+      "response_data": null,
+      "error": {
+        "detail": [
+          {
+            "type": "missing",
+            "loc": [
+              "body",
+              "config"
+            ],
+            "msg": "Field required",
+            "input": null,
+            "url": "https://errors.pydantic.dev/2.12/v/missing"
+          },
+          {
+            "type": "missing",
+            "loc": [
+              "body",
+              "price_update"
+            ],
+            "msg": "Field required",
+            "input": null,
+            "url": "https://errors.pydantic.dev/2.12/v/missing"
+          }
+        ]
+      }
+    }
+  ]
+}
