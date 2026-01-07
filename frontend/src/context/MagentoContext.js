@@ -74,7 +74,14 @@ export const MagentoProvider = ({ children }) => {
       });
       
       if (!storesResponse.ok) {
-        throw new Error('Errore nel recupero degli store');
+        let errorMessage = 'Errore nel recupero degli store';
+        try {
+          const error = await storesResponse.json();
+          errorMessage = error.detail || errorMessage;
+        } catch (e) {
+          // If response body can't be parsed as JSON, use default message
+        }
+        throw new Error(errorMessage);
       }
       
       const stores = await storesResponse.json();
