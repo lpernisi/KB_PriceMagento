@@ -56,8 +56,14 @@ export const MagentoProvider = ({ children }) => {
       });
       
       if (!testResponse.ok) {
-        const error = await testResponse.json();
-        throw new Error(error.detail || 'Connessione fallita');
+        let errorMessage = 'Connessione fallita';
+        try {
+          const error = await testResponse.json();
+          errorMessage = error.detail || errorMessage;
+        } catch (e) {
+          // If response body can't be parsed as JSON, use default message
+        }
+        throw new Error(errorMessage);
       }
       
       // Get store views
