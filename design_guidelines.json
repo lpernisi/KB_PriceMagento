@@ -1,0 +1,138 @@
+{
+  "identity": {
+    "name": "E1 Control Room",
+    "vibe": "Precision, Authority, High-Density, Swiss-Utility",
+    "description": "A professional command center for e-commerce operations. Prioritizes data density and clarity over decoration. Uses high-contrast typography and strict grids to manage complex pricing data."
+  },
+  "typography": {
+    "primary_font": "Inter",
+    "heading_font": "Chivo",
+    "mono_font": "JetBrains Mono",
+    "scale": {
+      "h1": "text-3xl font-bold tracking-tight",
+      "h2": "text-xl font-semibold tracking-tight",
+      "body": "text-sm leading-relaxed",
+      "data": "text-xs font-mono tracking-wide",
+      "label": "text-[10px] uppercase tracking-widest font-bold text-muted-foreground"
+    },
+    "imports": [
+      "@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;700;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');"
+    ]
+  },
+  "colors": {
+    "palette": {
+      "primary": "#002FA7",
+      "primary_foreground": "#FFFFFF",
+      "secondary": "#F1F5F9",
+      "secondary_foreground": "#0F172A",
+      "accent": "#FF4F00",
+      "accent_foreground": "#FFFFFF",
+      "background": "#FFFFFF",
+      "foreground": "#0F172A",
+      "muted": "#F8FAFC",
+      "muted_foreground": "#64748B",
+      "border": "#E2E8F0",
+      "input": "#E2E8F0",
+      "ring": "#002FA7"
+    },
+    "usage": {
+      "primary": "Brand identity, active states, primary buttons",
+      "accent": "Critical actions (Save, Update), alerts, high-priority toggles",
+      "background": "Main content area (Light Mode)",
+      "sidebar": "Deep Navy (#020617) for visual separation"
+    }
+  },
+  "layout": {
+    "grid_system": "The Control Room Grid",
+    "structure": {
+      "sidebar": "w-64 fixed h-full bg-slate-950 text-white border-r border-slate-800 z-50 hidden md:block",
+      "topbar": "h-16 border-b bg-white/80 backdrop-blur-md sticky top-0 z-40 flex items-center px-6 justify-between",
+      "main": "md:pl-64 min-h-screen bg-slate-50/50"
+    },
+    "spacing": {
+      "container": "p-6 max-w-7xl mx-auto",
+      "card_padding": "p-6",
+      "section_gap": "gap-8"
+    }
+  },
+  "components": {
+    "StoreSelector": {
+      "description": "A prominent dropdown in the top bar to switch contexts.",
+      "style": "h-10 w-[200px] border-slate-200 bg-white shadow-sm hover:bg-slate-50 transition-colors",
+      "interaction": "Must trigger a global state update for the 'current store'."
+    },
+    "PriceTable": {
+      "description": "The core workspace. High density, sticky header.",
+      "style": "w-full text-sm text-left border-collapse",
+      "header": "bg-slate-100/50 text-xs font-bold uppercase text-slate-500 h-10 sticky top-0",
+      "row": "border-b border-slate-100 hover:bg-blue-50/30 transition-colors h-12 group",
+      "cell": "px-4 py-2 align-middle",
+      "features": [
+        "Zebra striping (even:bg-slate-50/30)",
+        "Sticky Header",
+        "Mono font for SKU and Price"
+      ]
+    },
+    "InlineEdit": {
+      "description": "Click-to-edit functionality for prices and dates.",
+      "states": {
+        "default": "text-slate-900 cursor-pointer hover:text-blue-600 hover:underline decoration-dotted underline-offset-4",
+        "editing": "relative flex items-center gap-2"
+      },
+      "input_style": "h-8 w-24 px-2 text-right font-mono text-sm border-blue-500 ring-1 ring-blue-500 rounded-sm focus:outline-none"
+    },
+    "StatusBadge": {
+      "description": "Visual indicator for price validity.",
+      "variants": {
+        "active": "bg-emerald-100 text-emerald-700 border-emerald-200",
+        "scheduled": "bg-blue-100 text-blue-700 border-blue-200",
+        "expired": "bg-slate-100 text-slate-500 border-slate-200"
+      }
+    }
+  },
+  "visual_enhancers": {
+    "shadows": {
+      "card": "shadow-[0_2px_8px_rgba(0,0,0,0.04)]",
+      "dropdown": "shadow-[0_4px_20px_rgba(0,0,0,0.08)]"
+    },
+    "borders": {
+      "subtle": "border border-slate-200",
+      "focus": "ring-2 ring-blue-500/20 border-blue-500"
+    },
+    "radius": {
+      "default": "rounded-md",
+      "button": "rounded-md",
+      "input": "rounded-md"
+    }
+  },
+  "motion": {
+    "hover": "transition-all duration-200 ease-out",
+    "enter": "animate-in fade-in slide-in-from-bottom-2 duration-300",
+    "feedback": "active:scale-[0.98]"
+  },
+  "image_urls": {
+    "placeholders": [
+      "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=100&q=80",
+      "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=100&q=80",
+      "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=100&q=80",
+      "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&w=100&q=80"
+    ]
+  },
+  "instructions_to_main_agent": [
+    "1. SETUP: Install 'lucide-react' for icons.",
+    "2. THEME: Update 'tailwind.config.js' with the custom colors defined in 'colors.palette'.",
+    "3. LAYOUT: Create a 'DashboardLayout' component that includes the Sidebar and Topbar.",
+    "4. STATE: Use a simple React Context or State to manage the 'selectedStore' globally.",
+    "5. TABLE: Build a robust 'ProductTable' component. Do NOT use a generic data grid library if possible; build a clean HTML table for maximum styling control as per the 'PriceTable' specs.",
+    "6. EDITING: Implement the 'InlineEdit' pattern. Clicking a price should swap the text for an input. Blurring or pressing Enter should save.",
+    "7. MOCK DATA: Generate a realistic list of 10-20 products with SKUs, Names, Prices, and Special Prices to populate the table.",
+    "8. LOGIN: Create a simple, clean 'LoginPage' centered on the screen for the Magento credentials."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not use gradients for backgrounds; use solid colors or subtle noise textures.",
+    "Ensure all inputs have a clear focus state (ring-2 ring-primary/20).",
+    "Use 'sonner' for toast notifications on successful saves.",
+    "Keep the UI 'dense' - avoid excessive padding in the data table rows.",
+    "Use 'lucide-react' icons: 'Store', 'Search', 'Calendar', 'Save', 'Edit2', 'Check', 'X'."
+  ]
+}
