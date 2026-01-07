@@ -4,14 +4,17 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { AlertCircle, Loader2, Store, Key, Link } from 'lucide-react';
+import { AlertCircle, Loader2, Store, Key, Link, Lock } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
 
 export const ConfigForm = () => {
   const { config, connect, loading } = useMagento();
   const [formData, setFormData] = useState({
     magentoUrl: config.magentoUrl || '',
+    consumerKey: config.consumerKey || '',
+    consumerSecret: config.consumerSecret || '',
     accessToken: config.accessToken || '',
+    accessTokenSecret: config.accessTokenSecret || '',
   });
   const [error, setError] = useState('');
 
@@ -19,7 +22,8 @@ export const ConfigForm = () => {
     e.preventDefault();
     setError('');
 
-    if (!formData.magentoUrl || !formData.accessToken) {
+    if (!formData.magentoUrl || !formData.consumerKey || !formData.consumerSecret || 
+        !formData.accessToken || !formData.accessTokenSecret) {
       setError('Compila tutti i campi');
       return;
     }
@@ -32,7 +36,13 @@ export const ConfigForm = () => {
       return;
     }
 
-    const result = await connect(formData.magentoUrl, formData.accessToken);
+    const result = await connect(
+      formData.magentoUrl, 
+      formData.consumerKey,
+      formData.consumerSecret,
+      formData.accessToken,
+      formData.accessTokenSecret
+    );
     
     if (!result.success) {
       setError(result.error || 'Errore di connessione');
@@ -41,7 +51,7 @@ export const ConfigForm = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <Card className="w-full max-w-md shadow-[0_4px_20px_rgba(0,0,0,0.08)] border-slate-200">
+      <Card className="w-full max-w-lg shadow-[0_4px_20px_rgba(0,0,0,0.08)] border-slate-200">
         <CardHeader className="space-y-1 pb-6">
           <div className="flex items-center gap-3 mb-2">
             <div className="h-10 w-10 rounded-lg bg-[#002FA7] flex items-center justify-center">
@@ -52,11 +62,11 @@ export const ConfigForm = () => {
             </CardTitle>
           </div>
           <CardDescription className="text-slate-500">
-            Inserisci le credenziali del tuo store Magento 2
+            Inserisci le credenziali OAuth del tuo store Magento 2
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <Alert variant="destructive" className="bg-red-50 border-red-200">
                 <AlertCircle className="h-4 w-4" />
@@ -76,32 +86,91 @@ export const ConfigForm = () => {
                   placeholder="https://tuostore.com"
                   value={formData.magentoUrl}
                   onChange={(e) => setFormData({ ...formData, magentoUrl: e.target.value })}
-                  className="pl-10 h-11 border-slate-200 focus:ring-2 focus:ring-[#002FA7]/20 focus:border-[#002FA7]"
+                  className="pl-10 h-10 border-slate-200 focus:ring-2 focus:ring-[#002FA7]/20 focus:border-[#002FA7]"
                   data-testid="magento-url-input"
                 />
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="accessToken" className="text-xs uppercase tracking-widest font-bold text-slate-500">
-                Access Token
-              </Label>
-              <div className="relative">
-                <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <Input
-                  id="accessToken"
-                  type="password"
-                  placeholder="Il tuo token di integrazione admin"
-                  value={formData.accessToken}
-                  onChange={(e) => setFormData({ ...formData, accessToken: e.target.value })}
-                  className="pl-10 h-11 border-slate-200 focus:ring-2 focus:ring-[#002FA7]/20 focus:border-[#002FA7]"
-                  data-testid="access-token-input"
-                />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="consumerKey" className="text-xs uppercase tracking-widest font-bold text-slate-500">
+                  Consumer Key
+                </Label>
+                <div className="relative">
+                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    id="consumerKey"
+                    type="text"
+                    placeholder="Consumer Key"
+                    value={formData.consumerKey}
+                    onChange={(e) => setFormData({ ...formData, consumerKey: e.target.value })}
+                    className="pl-10 h-10 border-slate-200 focus:ring-2 focus:ring-[#002FA7]/20 focus:border-[#002FA7] text-sm"
+                    data-testid="consumer-key-input"
+                  />
+                </div>
               </div>
-              <p className="text-xs text-slate-400 mt-1">
-                Sistema → Integrazioni → Genera Token Admin
-              </p>
+
+              <div className="space-y-2">
+                <Label htmlFor="consumerSecret" className="text-xs uppercase tracking-widest font-bold text-slate-500">
+                  Consumer Secret
+                </Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    id="consumerSecret"
+                    type="password"
+                    placeholder="Consumer Secret"
+                    value={formData.consumerSecret}
+                    onChange={(e) => setFormData({ ...formData, consumerSecret: e.target.value })}
+                    className="pl-10 h-10 border-slate-200 focus:ring-2 focus:ring-[#002FA7]/20 focus:border-[#002FA7] text-sm"
+                    data-testid="consumer-secret-input"
+                  />
+                </div>
+              </div>
             </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="accessToken" className="text-xs uppercase tracking-widest font-bold text-slate-500">
+                  Access Token
+                </Label>
+                <div className="relative">
+                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    id="accessToken"
+                    type="text"
+                    placeholder="Access Token"
+                    value={formData.accessToken}
+                    onChange={(e) => setFormData({ ...formData, accessToken: e.target.value })}
+                    className="pl-10 h-10 border-slate-200 focus:ring-2 focus:ring-[#002FA7]/20 focus:border-[#002FA7] text-sm"
+                    data-testid="access-token-input"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="accessTokenSecret" className="text-xs uppercase tracking-widest font-bold text-slate-500">
+                  Access Token Secret
+                </Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    id="accessTokenSecret"
+                    type="password"
+                    placeholder="Access Token Secret"
+                    value={formData.accessTokenSecret}
+                    onChange={(e) => setFormData({ ...formData, accessTokenSecret: e.target.value })}
+                    className="pl-10 h-10 border-slate-200 focus:ring-2 focus:ring-[#002FA7]/20 focus:border-[#002FA7] text-sm"
+                    data-testid="access-token-secret-input"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Trova le credenziali in: Sistema → Integrazioni → La tua integrazione
+            </p>
 
             <Button
               type="submit"

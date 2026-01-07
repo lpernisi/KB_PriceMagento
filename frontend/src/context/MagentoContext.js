@@ -13,7 +13,10 @@ export const useMagento = () => {
 export const MagentoProvider = ({ children }) => {
   const [config, setConfig] = useState({
     magentoUrl: '',
+    consumerKey: '',
+    consumerSecret: '',
     accessToken: '',
+    accessTokenSecret: '',
     isConnected: false,
   });
   const [storeViews, setStoreViews] = useState([]);
@@ -34,7 +37,10 @@ export const MagentoProvider = ({ children }) => {
       if (data.success && data.config) {
         setConfig({
           magentoUrl: data.config.magento_url || '',
+          consumerKey: data.config.consumer_key || '',
+          consumerSecret: data.config.consumer_secret || '',
           accessToken: data.config.access_token || '',
+          accessTokenSecret: data.config.access_token_secret || '',
           isConnected: false,
         });
       }
@@ -43,16 +49,24 @@ export const MagentoProvider = ({ children }) => {
     }
   };
 
-  const connect = async (magentoUrl, accessToken) => {
+  const connect = async (magentoUrl, consumerKey, consumerSecret, accessToken, accessTokenSecret) => {
     setLoading(true);
     try {
       const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+      
+      const oauthConfig = {
+        magento_url: magentoUrl,
+        consumer_key: consumerKey,
+        consumer_secret: consumerSecret,
+        access_token: accessToken,
+        access_token_secret: accessTokenSecret,
+      };
       
       // Test connection
       const testResponse = await fetch(`${API}/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ magento_url: magentoUrl, access_token: accessToken }),
+        body: JSON.stringify(oauthConfig),
       });
       
       if (!testResponse.ok) {
@@ -70,7 +84,7 @@ export const MagentoProvider = ({ children }) => {
       const storesResponse = await fetch(`${API}/store-views`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ magento_url: magentoUrl, access_token: accessToken }),
+        body: JSON.stringify(oauthConfig),
       });
       
       if (!storesResponse.ok) {
@@ -90,12 +104,15 @@ export const MagentoProvider = ({ children }) => {
       await fetch(`${API}/save-config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ magento_url: magentoUrl, access_token: accessToken }),
+        body: JSON.stringify(oauthConfig),
       });
       
       setConfig({
         magentoUrl,
+        consumerKey,
+        consumerSecret,
         accessToken,
+        accessTokenSecret,
         isConnected: true,
       });
       setStoreViews(stores);
@@ -113,7 +130,10 @@ export const MagentoProvider = ({ children }) => {
   const disconnect = () => {
     setConfig({
       magentoUrl: '',
+      consumerKey: '',
+      consumerSecret: '',
       accessToken: '',
+      accessTokenSecret: '',
       isConnected: false,
     });
     setStoreViews([]);

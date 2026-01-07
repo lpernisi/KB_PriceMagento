@@ -55,7 +55,10 @@ export const Dashboard = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           magento_url: config.magentoUrl,
+          consumer_key: config.consumerKey,
+          consumer_secret: config.consumerSecret,
           access_token: config.accessToken,
+          access_token_secret: config.accessTokenSecret,
         }),
       });
 
@@ -101,7 +104,10 @@ export const Dashboard = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           magento_url: config.magentoUrl,
+          consumer_key: config.consumerKey,
+          consumer_secret: config.consumerSecret,
           access_token: config.accessToken,
+          access_token_secret: config.accessTokenSecret,
           sku,
           store_id: selectedStore?.id || 0,
           ...priceData,
