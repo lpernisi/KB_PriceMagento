@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone
 import httpx
+from requests_oauthlib import OAuth1
+import requests
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -31,7 +33,10 @@ logger = logging.getLogger(__name__)
 # Pydantic Models
 class MagentoConfig(BaseModel):
     magento_url: str
+    consumer_key: str
+    consumer_secret: str
     access_token: str
+    access_token_secret: str
 
 class StoreView(BaseModel):
     id: int
@@ -64,49 +69,81 @@ class PriceUpdate(BaseModel):
 
 class ConfigSave(BaseModel):
     magento_url: str
+    consumer_key: str
+    consumer_secret: str
     access_token: str
+    access_token_secret: str
 
-# Helper function to make Magento API calls
-async def magento_request(
+# Helper function to make Magento API calls with OAuth 1.0a
+def magento_request_sync(
     magento_url: str,
+    consumer_key: str,
+    consumer_secret: str,
     access_token: str,
+    access_token_secret: str,
     method: str,
     endpoint: str,
     data: dict = None,
     params: dict = None
 ) -> dict:
-    """Make authenticated request to Magento REST API"""
+    """Make OAuth 1.0a authenticated request to Magento REST API"""
     url = f"{magento_url.rstrip('/')}/rest/V1{endpoint}"
+    
+    oauth = OAuth1(
+        consumer_key,
+        client_secret=consumer_secret,
+        resource_owner_key=access_token,
+        resource_owner_secret=access_token_secret,
+        signature_method='HMAC-SHA256'
+    )
+    
     headers = {
-        "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         "Accept": "application/json"
     }
     
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            if method == "GET":
-                response = await client.get(url, headers=headers, params=params)
-            elif method == "POST":
-                response = await client.post(url, headers=headers, json=data)
-            elif method == "PUT":
-                response = await client.put(url, headers=headers, json=data)
-            else:
-                raise ValueError(f"Unsupported method: {method}")
-            
-            if response.status_code == 401:
-                raise HTTPException(status_code=401, detail="Token non valido o scaduto")
-            elif response.status_code == 404:
-                raise HTTPException(status_code=404, detail="Risorsa non trovata")
-            elif response.status_code >= 400:
-                logger.error(f"Magento API error: {response.status_code} - {response.text}")
-                raise HTTPException(status_code=response.status_code, detail=f"Errore Magento: {response.text}")
-            
-            return response.json()
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="Timeout connessione a Magento")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=502, detail=f"Errore connessione: {str(e)}")
+    try:
+        if method == "GET":
+            response = requests.get(url, auth=oauth, headers=headers, params=params, timeout=30)
+        elif method == "POST":
+            response = requests.post(url, auth=oauth, headers=headers, json=data, timeout=30)
+        elif method == "PUT":
+            response = requests.put(url, auth=oauth, headers=headers, json=data, timeout=30)
+        else:
+            raise ValueError(f"Unsupported method: {method}")
+        
+        if response.status_code == 401:
+            raise HTTPException(status_code=401, detail="Credenziali OAuth non valide")
+        elif response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Risorsa non trovata")
+        elif response.status_code >= 400:
+            logger.error(f"Magento API error: {response.status_code} - {response.text}")
+            raise HTTPException(status_code=response.status_code, detail=f"Errore Magento: {response.text}")
+        
+        return response.json()
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Timeout connessione a Magento")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Errore connessione: {str(e)}")
+
+async def magento_request(config: MagentoConfig, method: str, endpoint: str, data: dict = None, params: dict = None) -> dict:
+    """Async wrapper for OAuth request"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: magento_request_sync(
+            config.magento_url,
+            config.consumer_key,
+            config.consumer_secret,
+            config.access_token,
+            config.access_token_secret,
+            method,
+            endpoint,
+            data,
+            params
+        )
+    )
 
 # Routes
 @api_router.get("/")
@@ -117,12 +154,7 @@ async def root():
 async def test_connection(config: MagentoConfig):
     """Test connection to Magento API"""
     try:
-        result = await magento_request(
-            config.magento_url,
-            config.access_token,
-            "GET",
-            "/store/storeViews"
-        )
+        result = await magento_request(config, "GET", "/store/storeViews")
         return {"success": True, "message": "Connessione riuscita", "stores_count": len(result)}
     except HTTPException as e:
         raise e
@@ -133,12 +165,7 @@ async def test_connection(config: MagentoConfig):
 async def get_store_views(config: MagentoConfig):
     """Get all store views from Magento"""
     try:
-        result = await magento_request(
-            config.magento_url,
-            config.access_token,
-            "GET",
-            "/store/storeViews"
-        )
+        result = await magento_request(config, "GET", "/store/storeViews")
         
         store_views = []
         for sv in result:
@@ -182,13 +209,7 @@ async def get_products(
             params["searchCriteria[filter_groups][0][filters][1][condition_type]"] = "like"
         
         # Fetch products
-        products_result = await magento_request(
-            config.magento_url,
-            config.access_token,
-            "GET",
-            "/products",
-            params=params
-        )
+        products_result = await magento_request(config, "GET", "/products", params=params)
         
         products = []
         items = products_result.get("items", [])
@@ -289,41 +310,34 @@ async def update_product_price(config: MagentoConfig, price_update: PriceUpdate)
         if custom_attributes:
             product_data["product"]["custom_attributes"] = custom_attributes
         
-        # Update product via store-specific endpoint
-        endpoint = f"/products/{sku}"
+        # Get store code for store-specific updates
+        store_code = "all"
         if store_id > 0:
-            # For store-specific updates, we need to use store code
-            # First get store code
-            stores = await magento_request(
-                config.magento_url,
-                config.access_token,
-                "GET",
-                "/store/storeViews"
-            )
-            store_code = "all"
+            stores = await magento_request(config, "GET", "/store/storeViews")
             for store in stores:
                 if store.get("id") == store_id:
                     store_code = store.get("code", "all")
                     break
-            
-            # Use store-specific endpoint
-            url = f"{config.magento_url.rstrip('/')}/rest/{store_code}/V1/products/{sku}"
-        else:
-            url = f"{config.magento_url.rstrip('/')}/rest/all/V1/products/{sku}"
         
-        headers = {
-            "Authorization": f"Bearer {config.access_token}",
-            "Content-Type": "application/json"
-        }
+        # Use OAuth for the update request
+        oauth = OAuth1(
+            config.consumer_key,
+            client_secret=config.consumer_secret,
+            resource_owner_key=config.access_token,
+            resource_owner_secret=config.access_token_secret,
+            signature_method='HMAC-SHA256'
+        )
         
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
-            response = await http_client.put(url, headers=headers, json=product_data)
-            
-            if response.status_code >= 400:
-                logger.error(f"Magento update error: {response.text}")
-                raise HTTPException(status_code=response.status_code, detail=f"Errore aggiornamento: {response.text}")
-            
-            return {"success": True, "message": "Prezzo aggiornato con successo"}
+        url = f"{config.magento_url.rstrip('/')}/rest/{store_code}/V1/products/{sku}"
+        headers = {"Content-Type": "application/json"}
+        
+        response = requests.put(url, auth=oauth, headers=headers, json=product_data, timeout=30)
+        
+        if response.status_code >= 400:
+            logger.error(f"Magento update error: {response.text}")
+            raise HTTPException(status_code=response.status_code, detail=f"Errore aggiornamento: {response.text}")
+        
+        return {"success": True, "message": "Prezzo aggiornato con successo"}
     
     except HTTPException as e:
         raise e
@@ -335,7 +349,6 @@ async def update_product_price(config: MagentoConfig, price_update: PriceUpdate)
 async def update_special_price(config: MagentoConfig, price_update: PriceUpdate):
     """Update special price using Magento 2.2+ special price API"""
     try:
-        # Use the special price API endpoint
         payload = {
             "prices": [{
                 "sku": price_update.sku,
@@ -346,14 +359,7 @@ async def update_special_price(config: MagentoConfig, price_update: PriceUpdate)
             }]
         }
         
-        result = await magento_request(
-            config.magento_url,
-            config.access_token,
-            "POST",
-            "/products/special-price",
-            data=payload
-        )
-        
+        result = await magento_request(config, "POST", "/products/special-price", data=payload)
         return {"success": True, "message": "Prezzo scontato aggiornato"}
     except HTTPException as e:
         raise e
@@ -375,14 +381,7 @@ async def delete_special_price(config: MagentoConfig, sku: str = Query(...), sto
             }]
         }
         
-        result = await magento_request(
-            config.magento_url,
-            config.access_token,
-            "POST",
-            "/products/special-price-delete",
-            data=payload
-        )
-        
+        result = await magento_request(config, "POST", "/products/special-price-delete", data=payload)
         return {"success": True, "message": "Prezzo scontato rimosso"}
     except HTTPException as e:
         raise e
@@ -399,7 +398,10 @@ async def save_config(config: ConfigSave):
             {"_id": "default"},
             {"$set": {
                 "magento_url": config.magento_url,
+                "consumer_key": config.consumer_key,
+                "consumer_secret": config.consumer_secret,
                 "access_token": config.access_token,
+                "access_token_secret": config.access_token_secret,
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }},
             upsert=True
