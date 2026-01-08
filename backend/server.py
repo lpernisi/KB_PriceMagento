@@ -440,6 +440,339 @@ async def load_config():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# VAT Rates Management
+@api_router.get("/vat-rates")
+async def get_vat_rates():
+    """Get VAT rates for all stores"""
+    try:
+        rates = await db.vat_rates.find({}, {"_id": 0}).to_list(100)
+        return {"success": True, "vat_rates": rates}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/vat-rates")
+async def save_vat_rates(data: VatRatesUpdate):
+    """Save VAT rates for stores"""
+    try:
+        # Clear existing rates and insert new ones
+        await db.vat_rates.delete_many({})
+        if data.vat_rates:
+            rates_dicts = [rate.model_dump() for rate in data.vat_rates]
+            await db.vat_rates.insert_many(rates_dicts)
+        return {"success": True, "message": "Aliquote IVA salvate"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Excel Export
+@api_router.post("/export-prices")
+async def export_prices(config: MagentoConfig):
+    """Export all products prices to Excel"""
+    try:
+        # Get all store views
+        stores = await magento_request(config, "GET", "/store/storeViews")
+        
+        # Get VAT rates
+        vat_rates_cursor = db.vat_rates.find({}, {"_id": 0})
+        vat_rates_list = await vat_rates_cursor.to_list(100)
+        vat_rates = {rate["store_id"]: rate["vat_rate"] for rate in vat_rates_list}
+        
+        # Fetch all products (paginated)
+        all_products = []
+        page = 1
+        page_size = 100
+        
+        while True:
+            params = {
+                "searchCriteria[pageSize]": page_size,
+                "searchCriteria[currentPage]": page,
+            }
+            result = await magento_request(config, "GET", "/products", params=params)
+            items = result.get("items", [])
+            
+            if not items:
+                break
+                
+            all_products.extend(items)
+            
+            if len(items) < page_size:
+                break
+            page += 1
+            
+            # Safety limit
+            if page > 50:
+                break
+        
+        # Build Excel data
+        rows = []
+        for product in all_products:
+            sku = product.get("sku", "")
+            name = product.get("name", "")
+            base_price = product.get("price", 0)
+            
+            # Extract special price info
+            special_price = None
+            special_from = None
+            special_to = None
+            
+            for attr in product.get("custom_attributes", []):
+                attr_code = attr.get("attribute_code", "")
+                attr_value = attr.get("value")
+                if attr_code == "special_price" and attr_value:
+                    try:
+                        special_price = float(attr_value)
+                    except:
+                        pass
+                elif attr_code == "special_from_date":
+                    special_from = attr_value
+                elif attr_code == "special_to_date":
+                    special_to = attr_value
+            
+            # Add row for each store
+            for store in stores:
+                store_id = store.get("id", 0)
+                store_code = store.get("code", "")
+                store_name = store.get("name", "")
+                vat_rate = vat_rates.get(store_id, 0)
+                
+                # Calculate price with VAT for display
+                vat_multiplier = 1 + (vat_rate / 100) if vat_rate > 0 else 1
+                base_price_incl_vat = base_price * vat_multiplier if base_price else None
+                special_price_incl_vat = special_price * vat_multiplier if special_price else None
+                
+                rows.append({
+                    "SKU": sku,
+                    "Nome Prodotto": name,
+                    "Store": store_code,
+                    "Store Nome": store_name,
+                    "Aliquota IVA %": vat_rate,
+                    "Prezzo Base (IVA incl.)": round(base_price_incl_vat, 2) if base_price_incl_vat else None,
+                    "Prezzo Scontato (IVA incl.)": round(special_price_incl_vat, 2) if special_price_incl_vat else None,
+                    "Data Inizio Sconto": special_from,
+                    "Data Fine Sconto": special_to,
+                })
+        
+        # Create Excel file
+        df = pd.DataFrame(rows)
+        output = BytesIO()
+        
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Prezzi')
+            
+            # Auto-adjust column widths
+            worksheet = writer.sheets['Prezzi']
+            for idx, col in enumerate(df.columns):
+                max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
+                worksheet.set_column(idx, idx, min(max_len, 40))
+        
+        output.seek(0)
+        
+        filename = f"prezzi_magento_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error exporting prices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Excel Import
+@api_router.post("/import-prices")
+async def import_prices(
+    file: UploadFile = File(...),
+    magento_url: str = Query(...),
+    consumer_key: str = Query(...),
+    consumer_secret: str = Query(...),
+    access_token: str = Query(...),
+    access_token_secret: str = Query(...)
+):
+    """Import prices from Excel file"""
+    try:
+        # Read Excel file
+        contents = await file.read()
+        df = pd.read_excel(BytesIO(contents))
+        
+        # Validate required columns
+        required_cols = ["SKU", "Store"]
+        for col in required_cols:
+            if col not in df.columns:
+                raise HTTPException(status_code=400, detail=f"Colonna mancante: {col}")
+        
+        # Get VAT rates
+        vat_rates_cursor = db.vat_rates.find({}, {"_id": 0})
+        vat_rates_list = await vat_rates_cursor.to_list(100)
+        vat_rates_by_store = {}
+        for rate in vat_rates_list:
+            vat_rates_by_store[rate.get("store_id")] = rate.get("vat_rate", 0)
+        
+        # Get store views to map codes to IDs
+        config = MagentoConfig(
+            magento_url=magento_url,
+            consumer_key=consumer_key,
+            consumer_secret=consumer_secret,
+            access_token=access_token,
+            access_token_secret=access_token_secret
+        )
+        stores = await magento_request(config, "GET", "/store/storeViews")
+        store_code_to_id = {s.get("code"): s.get("id") for s in stores}
+        
+        # Process each row
+        results = {"success": 0, "errors": []}
+        
+        for idx, row in df.iterrows():
+            try:
+                sku = str(row.get("SKU", "")).strip()
+                store_code = str(row.get("Store", "")).strip()
+                
+                if not sku or not store_code:
+                    results["errors"].append(f"Riga {idx + 2}: SKU o Store mancante")
+                    continue
+                
+                store_id = store_code_to_id.get(store_code)
+                if store_id is None:
+                    results["errors"].append(f"Riga {idx + 2}: Store '{store_code}' non trovato")
+                    continue
+                
+                # Get VAT rate for this store
+                vat_rate = vat_rates_by_store.get(store_id, 0)
+                vat_divisor = 1 + (vat_rate / 100) if vat_rate > 0 else 1
+                
+                # Get prices (IVA inclusa from Excel) and convert to IVA esclusa
+                base_price_incl = row.get("Prezzo Base (IVA incl.)")
+                special_price_incl = row.get("Prezzo Scontato (IVA incl.)")
+                special_from = row.get("Data Inizio Sconto")
+                special_to = row.get("Data Fine Sconto")
+                
+                # Convert to net prices (IVA esclusa)
+                base_price = None
+                if pd.notna(base_price_incl):
+                    base_price = round(float(base_price_incl) / vat_divisor, 2)
+                
+                special_price = None
+                if pd.notna(special_price_incl):
+                    special_price = round(float(special_price_incl) / vat_divisor, 2)
+                
+                # Format dates
+                special_from_str = None
+                special_to_str = None
+                if pd.notna(special_from):
+                    if isinstance(special_from, datetime):
+                        special_from_str = special_from.strftime("%Y-%m-%d")
+                    else:
+                        special_from_str = str(special_from)[:10]
+                
+                if pd.notna(special_to):
+                    if isinstance(special_to, datetime):
+                        special_to_str = special_to.strftime("%Y-%m-%d")
+                    else:
+                        special_to_str = str(special_to)[:10]
+                
+                # Build update payload
+                if base_price is not None or special_price is not None:
+                    product_data = {"product": {"sku": sku}}
+                    
+                    if base_price is not None:
+                        product_data["product"]["price"] = base_price
+                    
+                    custom_attrs = []
+                    if special_price is not None:
+                        custom_attrs.append({"attribute_code": "special_price", "value": str(special_price)})
+                    if special_from_str:
+                        custom_attrs.append({"attribute_code": "special_from_date", "value": special_from_str})
+                    if special_to_str:
+                        custom_attrs.append({"attribute_code": "special_to_date", "value": special_to_str})
+                    
+                    if custom_attrs:
+                        product_data["product"]["custom_attributes"] = custom_attrs
+                    
+                    # Make update request
+                    oauth = OAuth1(
+                        consumer_key,
+                        client_secret=consumer_secret,
+                        resource_owner_key=access_token,
+                        resource_owner_secret=access_token_secret,
+                        signature_method='HMAC-SHA256'
+                    )
+                    
+                    url = f"{magento_url.rstrip('/')}/rest/{store_code}/V1/products/{sku}"
+                    headers = {"Content-Type": "application/json"}
+                    
+                    response = requests.put(url, auth=oauth, headers=headers, json=product_data, timeout=30)
+                    
+                    if response.status_code >= 400:
+                        results["errors"].append(f"Riga {idx + 2}: Errore Magento - {response.text[:100]}")
+                    else:
+                        results["success"] += 1
+                else:
+                    results["errors"].append(f"Riga {idx + 2}: Nessun prezzo da aggiornare")
+                    
+            except Exception as e:
+                results["errors"].append(f"Riga {idx + 2}: {str(e)}")
+        
+        return {
+            "success": True,
+            "message": f"Importazione completata: {results['success']} prodotti aggiornati",
+            "updated_count": results["success"],
+            "errors": results["errors"][:20]  # Limit errors shown
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error importing prices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Download template Excel
+@api_router.get("/download-template")
+async def download_template():
+    """Download empty Excel template for price import"""
+    try:
+        # Create template DataFrame
+        df = pd.DataFrame(columns=[
+            "SKU",
+            "Nome Prodotto",
+            "Store",
+            "Store Nome",
+            "Aliquota IVA %",
+            "Prezzo Base (IVA incl.)",
+            "Prezzo Scontato (IVA incl.)",
+            "Data Inizio Sconto",
+            "Data Fine Sconto"
+        ])
+        
+        # Add example row
+        df.loc[0] = [
+            "ESEMPIO-SKU-001",
+            "Prodotto Esempio",
+            "default",
+            "Default Store View",
+            22,
+            122.00,
+            99.00,
+            "2025-01-01",
+            "2025-12-31"
+        ]
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Prezzi')
+            
+            worksheet = writer.sheets['Prezzi']
+            for idx, col in enumerate(df.columns):
+                worksheet.set_column(idx, idx, 25)
+        
+        output.seek(0)
+        
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=template_prezzi.xlsx"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Include the router
 app.include_router(api_router)
 
