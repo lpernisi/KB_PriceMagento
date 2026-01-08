@@ -773,6 +773,73 @@ async def download_template():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Parse Excel file for C# API integration
+@api_router.post("/parse-excel")
+async def parse_excel(file: UploadFile = File(...)):
+    """Parse Excel file and return structured data for C# API"""
+    try:
+        contents = await file.read()
+        df = pd.read_excel(BytesIO(contents))
+        
+        # Validate required columns
+        required_cols = ["SKU", "Store"]
+        for col in required_cols:
+            if col not in df.columns:
+                raise HTTPException(status_code=400, detail=f"Colonna mancante: {col}")
+        
+        items = []
+        for idx, row in df.iterrows():
+            try:
+                sku = str(row.get("SKU", "")).strip()
+                store_code = str(row.get("Store", "")).strip()
+                
+                if not sku or not store_code:
+                    continue
+                
+                item = {
+                    "sku": sku,
+                    "product_name": str(row.get("Nome Prodotto", "")).strip() if pd.notna(row.get("Nome Prodotto")) else "",
+                    "store_code": store_code,
+                    "store_name": str(row.get("Store Nome", "")).strip() if pd.notna(row.get("Store Nome")) else "",
+                    "vat_rate": float(row.get("Aliquota IVA %", 0)) if pd.notna(row.get("Aliquota IVA %")) else 0,
+                    "base_price_incl_vat": float(row.get("Prezzo Base (IVA incl.)")) if pd.notna(row.get("Prezzo Base (IVA incl.)")) else None,
+                    "special_price_incl_vat": float(row.get("Prezzo Scontato (IVA incl.)")) if pd.notna(row.get("Prezzo Scontato (IVA incl.)")) else None,
+                    "special_price_from": None,
+                    "special_price_to": None
+                }
+                
+                # Handle dates
+                special_from = row.get("Data Inizio Sconto")
+                special_to = row.get("Data Fine Sconto")
+                
+                if pd.notna(special_from):
+                    if isinstance(special_from, datetime):
+                        item["special_price_from"] = special_from.strftime("%Y-%m-%d")
+                    else:
+                        item["special_price_from"] = str(special_from)[:10]
+                
+                if pd.notna(special_to):
+                    if isinstance(special_to, datetime):
+                        item["special_price_to"] = special_to.strftime("%Y-%m-%d")
+                    else:
+                        item["special_price_to"] = str(special_to)[:10]
+                
+                items.append(item)
+            except Exception as e:
+                logger.error(f"Error parsing row {idx}: {e}")
+                continue
+        
+        return {
+            "success": True,
+            "items": items,
+            "total_count": len(items)
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error parsing Excel: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Include the router
 app.include_router(api_router)
 
