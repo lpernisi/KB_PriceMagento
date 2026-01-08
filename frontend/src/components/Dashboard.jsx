@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useMagento } from '../context/MagentoContext';
 import { ProductTable } from './ProductTable';
+import { PendingChanges } from './PendingChanges';
+import { ApprovedChanges } from './ApprovedChanges';
 import { VatSettings } from './VatSettings';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -19,6 +21,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from './ui/tabs';
 import { 
   Store, 
   LogOut, 
@@ -31,14 +39,27 @@ import {
   Download,
   Upload,
   Settings,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Clock,
+  CheckCircle,
+  User
 } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-
 export const Dashboard = () => {
-  const { config, storeViews, selectedStore, setSelectedStore, disconnect, vatRates } = useMagento();
+  const { 
+    config, 
+    storeViews, 
+    selectedStore, 
+    setSelectedStore, 
+    disconnect, 
+    vatRates,
+    currentUser,
+    setCurrentUser,
+    importPricesToSqlServer,
+    PYTHON_API
+  } = useMagento();
+  
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -48,8 +69,11 @@ export const Dashboard = () => {
     totalCount: 0,
   });
   const [showVatSettings, setShowVatSettings] = useState(false);
+  const [showUserSettings, setShowUserSettings] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [activeTab, setActiveTab] = useState('products');
+  const [tempUser, setTempUser] = useState(currentUser);
 
   const fetchProducts = useCallback(async () => {
     if (!config.isConnected) return;
@@ -66,7 +90,7 @@ export const Dashboard = () => {
         params.append('search', searchTerm);
       }
 
-      const response = await fetch(`${API}/products?${params}`, {
+      const response = await fetch(`${PYTHON_API}/products?${params}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -95,11 +119,13 @@ export const Dashboard = () => {
     } finally {
       setLoading(false);
     }
-  }, [config, selectedStore, pagination.page, pagination.pageSize, searchTerm]);
+  }, [config, selectedStore, pagination.page, pagination.pageSize, searchTerm, PYTHON_API]);
 
   useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
+    if (activeTab === 'products') {
+      fetchProducts();
+    }
+  }, [fetchProducts, activeTab]);
 
   const handleStoreChange = (storeId) => {
     const store = storeViews.find(s => s.id.toString() === storeId);
@@ -113,41 +139,10 @@ export const Dashboard = () => {
     fetchProducts();
   };
 
-  const handlePriceUpdate = async (sku, priceData) => {
-    try {
-      const response = await fetch(`${API}/update-price`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          magento_url: config.magentoUrl,
-          consumer_key: config.consumerKey,
-          consumer_secret: config.consumerSecret,
-          access_token: config.accessToken,
-          access_token_secret: config.accessTokenSecret,
-          sku,
-          store_id: selectedStore?.id || 0,
-          ...priceData,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Errore aggiornamento');
-      }
-
-      toast.success('Prezzo aggiornato con successo');
-      fetchProducts();
-      return true;
-    } catch (error) {
-      toast.error(error.message || 'Errore aggiornamento prezzo');
-      return false;
-    }
-  };
-
   const handleExport = async () => {
     setExporting(true);
     try {
-      const response = await fetch(`${API}/export-prices`, {
+      const response = await fetch(`${PYTHON_API}/export-prices`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -183,7 +178,7 @@ export const Dashboard = () => {
 
   const handleDownloadTemplate = async () => {
     try {
-      const response = await fetch(`${API}/download-template`);
+      const response = await fetch(`${PYTHON_API}/download-template`);
       
       if (!response.ok) {
         throw new Error('Errore download template');
@@ -209,9 +204,11 @@ export const Dashboard = () => {
 
     setImporting(true);
     try {
+      // Read Excel file
       const formData = new FormData();
       formData.append('file', file);
 
+      // First, parse the Excel file using Python API
       const params = new URLSearchParams({
         magento_url: config.magentoUrl,
         consumer_key: config.consumerKey,
@@ -220,22 +217,42 @@ export const Dashboard = () => {
         access_token_secret: config.accessTokenSecret,
       });
 
-      const response = await fetch(`${API}/import-prices?${params}`, {
+      const parseResponse = await fetch(`${PYTHON_API}/parse-excel`, {
         method: 'POST',
         body: formData,
       });
 
-      const result = await response.json();
+      if (!parseResponse.ok) {
+        throw new Error('Errore parsing Excel');
+      }
+
+      const parsedData = await parseResponse.json();
+      
+      // Transform data for C# API
+      const pricesToImport = parsedData.items.map(item => ({
+        sku: item.sku,
+        productName: item.product_name,
+        storeCode: item.store_code,
+        storeName: item.store_name,
+        basePriceInclVat: item.base_price_incl_vat,
+        specialPriceInclVat: item.special_price_incl_vat,
+        specialPriceFrom: item.special_price_from,
+        specialPriceTo: item.special_price_to,
+        vatRate: item.vat_rate || 0
+      }));
+
+      // Send to C# API (SQL Server)
+      const result = await importPricesToSqlServer(pricesToImport, `Import da ${file.name}`);
 
       if (result.success) {
-        toast.success(`${result.updated_count} prodotti aggiornati`);
+        toast.success(`${result.importedCount} modifiche salvate in attesa di approvazione`);
         if (result.errors && result.errors.length > 0) {
           toast.warning(`${result.errors.length} errori durante l'import`);
-          console.log('Import errors:', result.errors);
         }
-        fetchProducts();
+        // Switch to pending tab
+        setActiveTab('pending');
       } else {
-        throw new Error(result.detail || 'Errore durante l\'import');
+        throw new Error(result.errors?.join(', ') || 'Errore durante l\'import');
       }
     } catch (error) {
       toast.error(error.message || 'Errore durante l\'import');
@@ -280,7 +297,6 @@ export const Dashboard = () => {
                   <SelectItem 
                     key={store.id} 
                     value={store.id.toString()}
-                    data-testid={`store-option-${store.id}`}
                   >
                     {store.name} ({store.code})
                     {vatRates[store.id] ? ` - IVA ${vatRates[store.id]}%` : ''}
@@ -292,56 +308,71 @@ export const Dashboard = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* User Settings */}
+          <Dialog open={showUserSettings} onOpenChange={setShowUserSettings}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2">
+                <User className="h-4 w-4" />
+                {currentUser}
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Utente Corrente</DialogTitle>
+                <DialogDescription>
+                  Questo nome verrà registrato nel log delle modifiche
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <Input
+                  value={tempUser}
+                  onChange={(e) => setTempUser(e.target.value)}
+                  placeholder="Nome utente"
+                />
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setShowUserSettings(false)}>
+                    Annulla
+                  </Button>
+                  <Button onClick={() => {
+                    setCurrentUser(tempUser);
+                    setShowUserSettings(false);
+                    toast.success('Utente aggiornato');
+                  }}>
+                    Salva
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
           {/* VAT Settings */}
           <Dialog open={showVatSettings} onOpenChange={setShowVatSettings}>
             <DialogTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                data-testid="vat-settings-button"
-              >
+              <Button variant="outline" size="sm" className="gap-2">
                 <Settings className="h-4 w-4" />
-                Aliquote IVA
+                IVA
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>Configurazione Aliquote IVA</DialogTitle>
                 <DialogDescription>
-                  Imposta l'aliquota IVA per ogni store. I prezzi importati verranno convertiti automaticamente in prezzi netti.
+                  I prezzi importati verranno convertiti automaticamente in prezzi netti.
                 </DialogDescription>
               </DialogHeader>
               <VatSettings onClose={() => setShowVatSettings(false)} />
             </DialogContent>
           </Dialog>
 
-          {/* Download Template */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleDownloadTemplate}
-            className="gap-2"
-            data-testid="download-template-button"
-          >
+          {/* Template */}
+          <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="gap-2">
             <FileSpreadsheet className="h-4 w-4" />
             Template
           </Button>
 
           {/* Export */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExport}
-            disabled={exporting}
-            className="gap-2"
-            data-testid="export-button"
-          >
-            {exporting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4" />
-            )}
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-2">
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             Export
           </Button>
 
@@ -353,126 +384,118 @@ export const Dashboard = () => {
               onChange={handleImport}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               disabled={importing}
-              data-testid="import-input"
             />
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={importing}
-              className="gap-2 pointer-events-none"
-            >
-              {importing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="h-4 w-4" />
-              )}
+            <Button variant="outline" size="sm" disabled={importing} className="gap-2 pointer-events-none">
+              {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               Import
             </Button>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={fetchProducts}
-            disabled={loading}
-            className="gap-2"
-            data-testid="refresh-button"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            Aggiorna
-          </Button>
-          
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={disconnect}
-            className="gap-2 text-slate-500 hover:text-slate-700"
-            data-testid="disconnect-button"
-          >
+          <Button variant="ghost" size="sm" onClick={disconnect} className="gap-2 text-slate-500 hover:text-slate-700">
             <LogOut className="h-4 w-4" />
-            Disconnetti
           </Button>
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content with Tabs */}
       <main className="p-6 max-w-7xl mx-auto">
-        {/* Search Bar */}
-        <div className="mb-6">
-          <form onSubmit={handleSearch} className="flex gap-3">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                type="text"
-                placeholder="Cerca per SKU o nome prodotto..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 h-10 border-slate-200"
-                data-testid="search-input"
-              />
-            </div>
-            <Button 
-              type="submit" 
-              variant="secondary"
-              className="h-10"
-              data-testid="search-button"
-            >
-              Cerca
-            </Button>
-          </form>
-        </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <TabsList className="bg-white border shadow-sm">
+            <TabsTrigger value="products" className="gap-2">
+              <Package className="h-4 w-4" />
+              Prodotti Magento
+            </TabsTrigger>
+            <TabsTrigger value="pending" className="gap-2">
+              <Clock className="h-4 w-4" />
+              In Attesa
+            </TabsTrigger>
+            <TabsTrigger value="approved" className="gap-2">
+              <CheckCircle className="h-4 w-4" />
+              Approvati
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Products Table */}
-        <div className="bg-white rounded-lg border border-slate-200 shadow-[0_2px_8px_rgba(0,0,0,0.04)] overflow-hidden">
-          {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="h-8 w-8 animate-spin text-[#002FA7]" />
-            </div>
-          ) : products.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-              <Package className="h-12 w-12 mb-4" />
-              <p className="text-lg font-medium">Nessun prodotto trovato</p>
-              <p className="text-sm">Prova a modificare i filtri di ricerca</p>
-            </div>
-          ) : (
-            <ProductTable 
-              products={products} 
-              onPriceUpdate={handlePriceUpdate}
-              storeId={selectedStore?.id || 0}
-            />
-          )}
-        </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="mt-4 flex items-center justify-between">
-            <p className="text-sm text-slate-500">
-              Pagina {pagination.page} di {totalPages} ({pagination.totalCount} prodotti)
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pagination.page === 1}
-                onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
-                data-testid="prev-page-button"
-              >
-                <ChevronLeft className="h-4 w-4" />
-                Precedente
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pagination.page >= totalPages}
-                onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
-                data-testid="next-page-button"
-              >
-                Successiva
-                <ChevronRight className="h-4 w-4" />
+          {/* Products Tab */}
+          <TabsContent value="products" className="space-y-6">
+            {/* Search Bar */}
+            <div className="flex gap-3">
+              <form onSubmit={handleSearch} className="flex gap-3 flex-1 max-w-md">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    type="text"
+                    placeholder="Cerca per SKU o nome prodotto..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 h-10 border-slate-200"
+                  />
+                </div>
+                <Button type="submit" variant="secondary" className="h-10">
+                  Cerca
+                </Button>
+              </form>
+              <Button variant="outline" size="sm" onClick={fetchProducts} disabled={loading} className="gap-2 h-10">
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                Aggiorna
               </Button>
             </div>
-          </div>
-        )}
+
+            {/* Products Table */}
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+              {loading ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="h-8 w-8 animate-spin text-[#002FA7]" />
+                </div>
+              ) : products.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                  <Package className="h-12 w-12 mb-4" />
+                  <p className="text-lg font-medium">Nessun prodotto trovato</p>
+                </div>
+              ) : (
+                <ProductTable products={products} storeId={selectedStore?.id || 0} />
+              )}
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-500">
+                  Pagina {pagination.page} di {totalPages} ({pagination.totalCount} prodotti)
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pagination.page === 1}
+                    onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Precedente
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pagination.page >= totalPages}
+                    onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
+                  >
+                    Successiva
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Pending Changes Tab */}
+          <TabsContent value="pending">
+            <PendingChanges />
+          </TabsContent>
+
+          {/* Approved Changes Tab */}
+          <TabsContent value="approved">
+            <ApprovedChanges />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

@@ -10,6 +10,10 @@ export const useMagento = () => {
   return context;
 };
 
+// API URLs
+const PYTHON_API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const CSHARP_API = process.env.REACT_APP_CSHARP_API_URL || 'https://pricing.kvstore.online/api';
+
 export const MagentoProvider = ({ children }) => {
   const [config, setConfig] = useState({
     magentoUrl: '',
@@ -24,13 +28,14 @@ export const MagentoProvider = ({ children }) => {
   const [vatRates, setVatRates] = useState({});
   const [loading, setLoading] = useState(false);
   const [autoLoginAttempted, setAutoLoginAttempted] = useState(false);
-
-  const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+  
+  // Current user (for audit)
+  const [currentUser, setCurrentUser] = useState(localStorage.getItem('currentUser') || 'Operatore');
 
   // Load VAT rates
   const loadVatRates = useCallback(async () => {
     try {
-      const response = await fetch(`${API}/vat-rates`);
+      const response = await fetch(`${PYTHON_API}/vat-rates`);
       const data = await response.json();
       if (data.success && data.vat_rates) {
         const ratesMap = {};
@@ -42,7 +47,7 @@ export const MagentoProvider = ({ children }) => {
     } catch (error) {
       console.error('Error loading VAT rates:', error);
     }
-  }, [API]);
+  }, []);
 
   // Save VAT rates
   const saveVatRates = async (rates) => {
@@ -56,7 +61,7 @@ export const MagentoProvider = ({ children }) => {
         };
       });
 
-      const response = await fetch(`${API}/vat-rates`, {
+      const response = await fetch(`${PYTHON_API}/vat-rates`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vat_rates: ratesArray }),
@@ -79,18 +84,16 @@ export const MagentoProvider = ({ children }) => {
       setAutoLoginAttempted(true);
       
       try {
-        const response = await fetch(`${API}/load-config`);
+        const response = await fetch(`${PYTHON_API}/load-config`);
         const data = await response.json();
         
         if (data.success && data.config) {
           const savedConfig = data.config;
           
-          // Check if we have all required fields
           if (savedConfig.magento_url && savedConfig.consumer_key && 
               savedConfig.consumer_secret && savedConfig.access_token && 
               savedConfig.access_token_secret) {
             
-            // Try to connect automatically
             setLoading(true);
             
             const oauthConfig = {
@@ -101,16 +104,14 @@ export const MagentoProvider = ({ children }) => {
               access_token_secret: savedConfig.access_token_secret,
             };
             
-            // Test connection
-            const testResponse = await fetch(`${API}/test-connection`, {
+            const testResponse = await fetch(`${PYTHON_API}/test-connection`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(oauthConfig),
             });
             
             if (testResponse.ok) {
-              // Get store views
-              const storesResponse = await fetch(`${API}/store-views`, {
+              const storesResponse = await fetch(`${PYTHON_API}/store-views`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(oauthConfig),
@@ -130,11 +131,9 @@ export const MagentoProvider = ({ children }) => {
                 setStoreViews(stores);
                 setSelectedStore(stores.length > 0 ? stores[0] : null);
                 
-                // Load VAT rates
                 await loadVatRates();
               }
             } else {
-              // Connection failed, show form with saved values
               setConfig({
                 magentoUrl: savedConfig.magento_url,
                 consumerKey: savedConfig.consumer_key,
@@ -155,7 +154,7 @@ export const MagentoProvider = ({ children }) => {
     };
     
     attemptAutoLogin();
-  }, [API, autoLoginAttempted, loadVatRates]);
+  }, [autoLoginAttempted, loadVatRates]);
 
   const connect = async (magentoUrl, consumerKey, consumerSecret, accessToken, accessTokenSecret) => {
     setLoading(true);
@@ -168,8 +167,7 @@ export const MagentoProvider = ({ children }) => {
         access_token_secret: accessTokenSecret,
       };
       
-      // Test connection
-      const testResponse = await fetch(`${API}/test-connection`, {
+      const testResponse = await fetch(`${PYTHON_API}/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(oauthConfig),
@@ -184,8 +182,7 @@ export const MagentoProvider = ({ children }) => {
         throw new Error(errorMessage);
       }
       
-      // Get store views
-      const storesResponse = await fetch(`${API}/store-views`, {
+      const storesResponse = await fetch(`${PYTHON_API}/store-views`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(oauthConfig),
@@ -202,8 +199,7 @@ export const MagentoProvider = ({ children }) => {
       
       const stores = await storesResponse.json();
       
-      // Save config
-      await fetch(`${API}/save-config`, {
+      await fetch(`${PYTHON_API}/save-config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(oauthConfig),
@@ -220,7 +216,6 @@ export const MagentoProvider = ({ children }) => {
       setStoreViews(stores);
       setSelectedStore(stores.length > 0 ? stores[0] : null);
       
-      // Load VAT rates
       await loadVatRates();
       
       return { success: true };
@@ -245,6 +240,111 @@ export const MagentoProvider = ({ children }) => {
     setSelectedStore(null);
   };
 
+  // C# API Methods
+  const importPricesToSqlServer = async (prices, notes = '') => {
+    try {
+      const response = await fetch(`${CSHARP_API}/prices/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prices: prices,
+          importedBy: currentUser,
+          notes: notes
+        }),
+      });
+      return await response.json();
+    } catch (error) {
+      return { success: false, errors: [error.message] };
+    }
+  };
+
+  const getPendingChanges = async (page = 1, pageSize = 50, storeCode = null) => {
+    try {
+      const params = new URLSearchParams({ page, pageSize });
+      if (storeCode) params.append('storeCode', storeCode);
+      
+      const response = await fetch(`${CSHARP_API}/prices/pending?${params}`);
+      return await response.json();
+    } catch (error) {
+      return { items: [], totalCount: 0 };
+    }
+  };
+
+  const getApprovedChanges = async (page = 1, pageSize = 50) => {
+    try {
+      const response = await fetch(`${CSHARP_API}/prices/approved?page=${page}&pageSize=${pageSize}`);
+      return await response.json();
+    } catch (error) {
+      return { items: [], totalCount: 0 };
+    }
+  };
+
+  const approveChanges = async (priceChangeIds, notes = '') => {
+    try {
+      const response = await fetch(`${CSHARP_API}/prices/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          priceChangeIds,
+          approvedBy: currentUser,
+          notes
+        }),
+      });
+      return await response.json();
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  };
+
+  const rejectChanges = async (priceChangeIds, reason) => {
+    try {
+      const response = await fetch(`${CSHARP_API}/prices/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          priceChangeIds,
+          rejectedBy: currentUser,
+          reason
+        }),
+      });
+      return await response.json();
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  };
+
+  const publishToMagento = async (priceChangeIds) => {
+    try {
+      const response = await fetch(`${CSHARP_API}/prices/publish`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Magento-Url': config.magentoUrl,
+          'X-Magento-ConsumerKey': config.consumerKey,
+          'X-Magento-ConsumerSecret': config.consumerSecret,
+          'X-Magento-AccessToken': config.accessToken,
+          'X-Magento-AccessTokenSecret': config.accessTokenSecret,
+        },
+        body: JSON.stringify({
+          priceChangeIds,
+          publishedBy: currentUser
+        }),
+      });
+      return await response.json();
+    } catch (error) {
+      return { success: false, publishedCount: 0, errors: [{ error: error.message }] };
+    }
+  };
+
+  const getPriceHistory = async (sku) => {
+    try {
+      const response = await fetch(`${CSHARP_API}/prices/history/${encodeURIComponent(sku)}`);
+      return await response.json();
+    } catch (error) {
+      return { changes: [], logs: [] };
+    }
+  };
+
   const value = {
     config,
     storeViews,
@@ -256,6 +356,21 @@ export const MagentoProvider = ({ children }) => {
     loading,
     connect,
     disconnect,
+    currentUser,
+    setCurrentUser: (user) => {
+      setCurrentUser(user);
+      localStorage.setItem('currentUser', user);
+    },
+    // C# API methods
+    importPricesToSqlServer,
+    getPendingChanges,
+    getApprovedChanges,
+    approveChanges,
+    rejectChanges,
+    publishToMagento,
+    getPriceHistory,
+    PYTHON_API,
+    CSHARP_API,
   };
 
   return (
