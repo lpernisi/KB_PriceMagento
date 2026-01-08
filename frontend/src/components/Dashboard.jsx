@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useMagento } from '../context/MagentoContext';
 import { ProductTable } from './ProductTable';
+import { VatSettings } from './VatSettings';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import {
@@ -10,6 +11,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from './ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from './ui/dialog';
 import { 
   Store, 
   LogOut, 
@@ -18,14 +27,18 @@ import {
   Loader2,
   Package,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Download,
+  Upload,
+  Settings,
+  FileSpreadsheet
 } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const Dashboard = () => {
-  const { config, storeViews, selectedStore, setSelectedStore, disconnect } = useMagento();
+  const { config, storeViews, selectedStore, setSelectedStore, disconnect, vatRates } = useMagento();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,6 +47,9 @@ export const Dashboard = () => {
     pageSize: 20,
     totalCount: 0,
   });
+  const [showVatSettings, setShowVatSettings] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const fetchProducts = useCallback(async () => {
     if (!config.isConnected) return;
@@ -128,6 +144,107 @@ export const Dashboard = () => {
     }
   };
 
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const response = await fetch(`${API}/export-prices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          magento_url: config.magentoUrl,
+          consumer_key: config.consumerKey,
+          consumer_secret: config.consumerSecret,
+          access_token: config.accessToken,
+          access_token_secret: config.accessTokenSecret,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Errore durante l\'export');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `prezzi_magento_${new Date().toISOString().slice(0,10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+      
+      toast.success('Export completato!');
+    } catch (error) {
+      toast.error(error.message || 'Errore durante l\'export');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await fetch(`${API}/download-template`);
+      
+      if (!response.ok) {
+        throw new Error('Errore download template');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'template_prezzi.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+    } catch (error) {
+      toast.error('Errore download template');
+    }
+  };
+
+  const handleImport = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const params = new URLSearchParams({
+        magento_url: config.magentoUrl,
+        consumer_key: config.consumerKey,
+        consumer_secret: config.consumerSecret,
+        access_token: config.accessToken,
+        access_token_secret: config.accessTokenSecret,
+      });
+
+      const response = await fetch(`${API}/import-prices?${params}`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast.success(`${result.updated_count} prodotti aggiornati`);
+        if (result.errors && result.errors.length > 0) {
+          toast.warning(`${result.errors.length} errori durante l'import`);
+          console.log('Import errors:', result.errors);
+        }
+        fetchProducts();
+      } else {
+        throw new Error(result.detail || 'Errore durante l\'import');
+      }
+    } catch (error) {
+      toast.error(error.message || 'Errore durante l\'import');
+    } finally {
+      setImporting(false);
+      event.target.value = '';
+    }
+  };
+
   const totalPages = Math.ceil(pagination.totalCount / pagination.pageSize);
 
   return (
@@ -166,6 +283,7 @@ export const Dashboard = () => {
                     data-testid={`store-option-${store.id}`}
                   >
                     {store.name} ({store.code})
+                    {vatRates[store.id] ? ` - IVA ${vatRates[store.id]}%` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -173,7 +291,85 @@ export const Dashboard = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          {/* VAT Settings */}
+          <Dialog open={showVatSettings} onOpenChange={setShowVatSettings}>
+            <DialogTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                data-testid="vat-settings-button"
+              >
+                <Settings className="h-4 w-4" />
+                Aliquote IVA
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Configurazione Aliquote IVA</DialogTitle>
+                <DialogDescription>
+                  Imposta l'aliquota IVA per ogni store. I prezzi importati verranno convertiti automaticamente in prezzi netti.
+                </DialogDescription>
+              </DialogHeader>
+              <VatSettings onClose={() => setShowVatSettings(false)} />
+            </DialogContent>
+          </Dialog>
+
+          {/* Download Template */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadTemplate}
+            className="gap-2"
+            data-testid="download-template-button"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Template
+          </Button>
+
+          {/* Export */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={exporting}
+            className="gap-2"
+            data-testid="export-button"
+          >
+            {exporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            Export
+          </Button>
+
+          {/* Import */}
+          <div className="relative">
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleImport}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              disabled={importing}
+              data-testid="import-input"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={importing}
+              className="gap-2 pointer-events-none"
+            >
+              {importing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              Import
+            </Button>
+          </div>
+
           <Button
             variant="outline"
             size="sm"
