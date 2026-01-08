@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,11 +7,13 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime, timezone
 import httpx
 from requests_oauthlib import OAuth1
 import requests
+import pandas as pd
+from io import BytesIO
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -73,6 +76,22 @@ class ConfigSave(BaseModel):
     consumer_secret: str
     access_token: str
     access_token_secret: str
+
+class StoreVatRate(BaseModel):
+    store_id: int
+    store_name: str
+    vat_rate: float  # Percentuale IVA (es: 22 per 22%)
+
+class VatRatesUpdate(BaseModel):
+    vat_rates: List[StoreVatRate]
+
+class BulkPriceUpdate(BaseModel):
+    sku: str
+    store_code: str
+    base_price: Optional[float] = None
+    special_price: Optional[float] = None
+    special_price_from: Optional[str] = None
+    special_price_to: Optional[str] = None
 
 # Helper function to make Magento API calls with OAuth 1.0a
 def magento_request_sync(
