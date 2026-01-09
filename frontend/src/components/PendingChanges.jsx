@@ -77,10 +77,11 @@ export const PendingChanges = () => {
       if (selectedStore?.code) {
         const result = await getLookup(selectedStore.code);
         if (!result.error) {
+          // Filtra stringhe vuote dai risultati
           setLookup({
-            categorie: result.categorie || [],
-            linee: result.linee || [],
-            marche: result.marche || []
+            categorie: (result.categorie || []).filter(v => v && v.trim() !== ''),
+            linee: (result.linee || []).filter(v => v && v.trim() !== ''),
+            marche: (result.marche || []).filter(v => v && v.trim() !== '')
           });
         }
       }
