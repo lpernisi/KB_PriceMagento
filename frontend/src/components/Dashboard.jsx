@@ -216,7 +216,7 @@ export const Dashboard = () => {
           {/* Store Selector */}
           <div className="ml-6">
             <Select
-              value={selectedStore?.id?.toString() || ''}
+              value={selectedStore?.id?.toString() || 'none'}
               onValueChange={handleStoreChange}
             >
               <SelectTrigger 
@@ -226,15 +226,19 @@ export const Dashboard = () => {
                 <SelectValue placeholder="Seleziona Store" />
               </SelectTrigger>
               <SelectContent className="shadow-[0_4px_20px_rgba(0,0,0,0.08)]">
-                {storeViews.map((store) => (
-                  <SelectItem 
-                    key={store.id} 
-                    value={store.id.toString()}
-                  >
-                    {store.name} ({store.code})
-                    {vatRates[store.id] ? ` - IVA ${vatRates[store.id]}%` : ''}
-                  </SelectItem>
-                ))}
+                {storeViews.length === 0 ? (
+                  <SelectItem value="none" disabled>Nessuno store</SelectItem>
+                ) : (
+                  storeViews.map((store) => (
+                    <SelectItem 
+                      key={store.id} 
+                      value={store.id.toString()}
+                    >
+                      {store.name} ({store.code})
+                      {vatRates[store.id] ? ` - IVA ${vatRates[store.id]}%` : ''}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>
