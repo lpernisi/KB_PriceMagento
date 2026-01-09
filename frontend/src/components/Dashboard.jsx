@@ -37,7 +37,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Upload,
   Settings,
   FileSpreadsheet,
   Clock,
@@ -56,7 +55,6 @@ export const Dashboard = () => {
     vatRates,
     currentUser,
     setCurrentUser,
-    importPricesToSqlServer,
     PYTHON_API
   } = useMagento();
   
@@ -70,9 +68,8 @@ export const Dashboard = () => {
   });
   const [showVatSettings, setShowVatSettings] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [activeTab, setActiveTab] = useState('products');
+  const [activeTab, setActiveTab] = useState('pending');
   const [tempUser, setTempUser] = useState(currentUser);
 
   const fetchProducts = useCallback(async () => {
@@ -198,70 +195,6 @@ export const Dashboard = () => {
     }
   };
 
-  const handleImport = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setImporting(true);
-    try {
-      // Read Excel file
-      const formData = new FormData();
-      formData.append('file', file);
-
-      // First, parse the Excel file using Python API
-      const params = new URLSearchParams({
-        magento_url: config.magentoUrl,
-        consumer_key: config.consumerKey,
-        consumer_secret: config.consumerSecret,
-        access_token: config.accessToken,
-        access_token_secret: config.accessTokenSecret,
-      });
-
-      const parseResponse = await fetch(`${PYTHON_API}/parse-excel`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!parseResponse.ok) {
-        throw new Error('Errore parsing Excel');
-      }
-
-      const parsedData = await parseResponse.json();
-      
-      // Transform data for C# API
-      const pricesToImport = parsedData.items.map(item => ({
-        sku: item.sku,
-        productName: item.product_name,
-        storeCode: item.store_code,
-        storeName: item.store_name,
-        basePriceInclVat: item.base_price_incl_vat,
-        specialPriceInclVat: item.special_price_incl_vat,
-        specialPriceFrom: item.special_price_from,
-        specialPriceTo: item.special_price_to,
-        vatRate: item.vat_rate || 0
-      }));
-
-      // Send to C# API (SQL Server)
-      const result = await importPricesToSqlServer(pricesToImport, `Import da ${file.name}`);
-
-      if (result.success) {
-        toast.success(`${result.importedCount} modifiche salvate in attesa di approvazione`);
-        if (result.errors && result.errors.length > 0) {
-          toast.warning(`${result.errors.length} errori durante l'import`);
-        }
-        // Switch to pending tab
-        setActiveTab('pending');
-      } else {
-        throw new Error(result.errors?.join(', ') || 'Errore durante l\'import');
-      }
-    } catch (error) {
-      toast.error(error.message || 'Errore durante l\'import');
-    } finally {
-      setImporting(false);
-      event.target.value = '';
-    }
-  };
-
   const totalPages = Math.ceil(pagination.totalCount / pagination.pageSize);
 
   return (
@@ -376,21 +309,6 @@ export const Dashboard = () => {
             Export
           </Button>
 
-          {/* Import */}
-          <div className="relative">
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleImport}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              disabled={importing}
-            />
-            <Button variant="outline" size="sm" disabled={importing} className="gap-2 pointer-events-none">
-              {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              Import
-            </Button>
-          </div>
-
           <Button variant="ghost" size="sm" onClick={disconnect} className="gap-2 text-slate-500 hover:text-slate-700">
             <LogOut className="h-4 w-4" />
           </Button>
@@ -401,10 +319,6 @@ export const Dashboard = () => {
       <main className="p-6 max-w-7xl mx-auto">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="bg-white border shadow-sm">
-            <TabsTrigger value="products" className="gap-2">
-              <Package className="h-4 w-4" />
-              Prodotti Magento
-            </TabsTrigger>
             <TabsTrigger value="pending" className="gap-2">
               <Clock className="h-4 w-4" />
               In Attesa
@@ -413,7 +327,21 @@ export const Dashboard = () => {
               <CheckCircle className="h-4 w-4" />
               Approvati
             </TabsTrigger>
+            <TabsTrigger value="products" className="gap-2">
+              <Package className="h-4 w-4" />
+              Prodotti Magento
+            </TabsTrigger>
           </TabsList>
+
+          {/* Pending Changes Tab */}
+          <TabsContent value="pending">
+            <PendingChanges />
+          </TabsContent>
+
+          {/* Approved Changes Tab */}
+          <TabsContent value="approved">
+            <ApprovedChanges />
+          </TabsContent>
 
           {/* Products Tab */}
           <TabsContent value="products" className="space-y-6">
@@ -484,16 +412,6 @@ export const Dashboard = () => {
                 </div>
               </div>
             )}
-          </TabsContent>
-
-          {/* Pending Changes Tab */}
-          <TabsContent value="pending">
-            <PendingChanges />
-          </TabsContent>
-
-          {/* Approved Changes Tab */}
-          <TabsContent value="approved">
-            <ApprovedChanges />
           </TabsContent>
         </Tabs>
       </main>

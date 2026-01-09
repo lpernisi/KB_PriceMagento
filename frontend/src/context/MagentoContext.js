@@ -12,7 +12,7 @@ export const useMagento = () => {
 
 // API URLs
 const PYTHON_API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const CSHARP_API = process.env.REACT_APP_CSHARP_API_URL || 'https://pricing.kvstore.online/api';
+const CSHARP_API = 'https://pricing.kvstore.online/api/pricing/batch';
 
 export const MagentoProvider = ({ children }) => {
   const [config, setConfig] = useState({
@@ -28,11 +28,9 @@ export const MagentoProvider = ({ children }) => {
   const [vatRates, setVatRates] = useState({});
   const [loading, setLoading] = useState(false);
   const [autoLoginAttempted, setAutoLoginAttempted] = useState(false);
-  
-  // Current user (for audit)
   const [currentUser, setCurrentUser] = useState(localStorage.getItem('currentUser') || 'Operatore');
 
-  // Load VAT rates
+  // Load VAT rates from Python API
   const loadVatRates = useCallback(async () => {
     try {
       const response = await fetch(`${PYTHON_API}/vat-rates`);
@@ -77,7 +75,7 @@ export const MagentoProvider = ({ children }) => {
     }
   };
 
-  // Try auto-login on mount
+  // Auto-login
   useEffect(() => {
     const attemptAutoLogin = async () => {
       if (autoLoginAttempted) return;
@@ -240,108 +238,121 @@ export const MagentoProvider = ({ children }) => {
     setSelectedStore(null);
   };
 
-  // C# API Methods
-  const importPricesToSqlServer = async (prices, notes = '') => {
+  // =====================================================
+  // C# API Methods - PRICING BATCH
+  // Base URL: https://pricing.kvstore.online/api/pricing/batch
+  // =====================================================
+
+  // 1) Crea un nuovo batch
+  const createBatch = async (store, nome, note = '') => {
     try {
-      const response = await fetch(`${CSHARP_API}/prices/import`, {
+      const response = await fetch(CSHARP_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prices: prices,
-          importedBy: currentUser,
-          notes: notes
-        }),
+        body: JSON.stringify({ store, nome, note }),
       });
       return await response.json();
     } catch (error) {
-      return { success: false, errors: [error.message] };
+      return { error: error.message };
     }
   };
 
-  const getPendingChanges = async (page = 1, pageSize = 50, storeCode = null) => {
+  // 2) Inizializza batch (popola righe da staging)
+  const initBatch = async (batchId) => {
     try {
-      const params = new URLSearchParams({ page, pageSize });
-      if (storeCode) params.append('storeCode', storeCode);
-      
-      const response = await fetch(`${CSHARP_API}/prices/pending?${params}`);
-      return await response.json();
-    } catch (error) {
-      return { items: [], totalCount: 0 };
-    }
-  };
-
-  const getApprovedChanges = async (page = 1, pageSize = 50) => {
-    try {
-      const response = await fetch(`${CSHARP_API}/prices/approved?page=${page}&pageSize=${pageSize}`);
-      return await response.json();
-    } catch (error) {
-      return { items: [], totalCount: 0 };
-    }
-  };
-
-  const approveChanges = async (priceChangeIds, notes = '') => {
-    try {
-      const response = await fetch(`${CSHARP_API}/prices/approve`, {
+      const response = await fetch(`${CSHARP_API}/${batchId}/init`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          priceChangeIds,
-          approvedBy: currentUser,
-          notes
-        }),
       });
       return await response.json();
     } catch (error) {
-      return { success: false, message: error.message };
+      return { error: error.message };
     }
   };
 
-  const rejectChanges = async (priceChangeIds, reason) => {
+  // 3) GET righe pending (paginazione server-side)
+  const getPendingRows = async (store, page = 1, pageSize = 50) => {
     try {
-      const response = await fetch(`${CSHARP_API}/prices/reject`, {
+      const params = new URLSearchParams({ store, page, pageSize });
+      const response = await fetch(`${CSHARP_API}/pending?${params}`);
+      return await response.json();
+    } catch (error) {
+      return { items: [], totalCount: 0, error: error.message };
+    }
+  };
+
+  // 4) GET righe approvate (paginazione server-side)
+  const getApprovedRows = async (store, page = 1, pageSize = 50) => {
+    try {
+      const params = new URLSearchParams({ store, page, pageSize });
+      const response = await fetch(`${CSHARP_API}/approved?${params}`);
+      return await response.json();
+    } catch (error) {
+      return { items: [], totalCount: 0, error: error.message };
+    }
+  };
+
+  // 5) Modifica singola riga
+  const updateRow = async (rowId, data) => {
+    try {
+      const response = await fetch(`${CSHARP_API}/rows/${rowId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      return await response.json();
+    } catch (error) {
+      return { error: error.message };
+    }
+  };
+
+  // 6) Approva BATCH (non singole righe)
+  const approveBatch = async (batchId) => {
+    try {
+      const response = await fetch(`${CSHARP_API}/${batchId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          priceChangeIds,
-          rejectedBy: currentUser,
-          reason
-        }),
       });
       return await response.json();
     } catch (error) {
-      return { success: false, message: error.message };
+      return { error: error.message };
     }
   };
 
-  const publishToMagento = async (priceChangeIds) => {
+  // 7) Pubblica batch su Magento (step separato da approvazione)
+  const publishBatch = async (batchId) => {
     try {
-      const response = await fetch(`${CSHARP_API}/prices/publish`, {
+      const response = await fetch(`${CSHARP_API}/${batchId}/publish`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Magento-Url': config.magentoUrl,
-          'X-Magento-ConsumerKey': config.consumerKey,
-          'X-Magento-ConsumerSecret': config.consumerSecret,
-          'X-Magento-AccessToken': config.accessToken,
-          'X-Magento-AccessTokenSecret': config.accessTokenSecret,
-        },
-        body: JSON.stringify({
-          priceChangeIds,
-          publishedBy: currentUser
-        }),
+        headers: { 'Content-Type': 'application/json' },
       });
       return await response.json();
     } catch (error) {
-      return { success: false, publishedCount: 0, errors: [{ error: error.message }] };
+      return { error: error.message };
     }
   };
 
-  const getPriceHistory = async (sku) => {
+  // 8) Lookup per filtri (categorie, linee, marche)
+  const getLookup = async (store) => {
     try {
-      const response = await fetch(`${CSHARP_API}/prices/history/${encodeURIComponent(sku)}`);
+      const response = await fetch(`${CSHARP_API}/lookup?store=${store}`);
       return await response.json();
     } catch (error) {
-      return { changes: [], logs: [] };
+      return { categorie: [], linee: [], marche: [], error: error.message };
+    }
+  };
+
+  // 9) Ricerca avanzata righe batch
+  const searchBatchRows = async (batchId, filters) => {
+    try {
+      const response = await fetch(`${CSHARP_API}/${batchId}/rows/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(filters),
+      });
+      return await response.json();
+    } catch (error) {
+      return { items: [], error: error.message };
     }
   };
 
@@ -361,14 +372,16 @@ export const MagentoProvider = ({ children }) => {
       setCurrentUser(user);
       localStorage.setItem('currentUser', user);
     },
-    // C# API methods
-    importPricesToSqlServer,
-    getPendingChanges,
-    getApprovedChanges,
-    approveChanges,
-    rejectChanges,
-    publishToMagento,
-    getPriceHistory,
+    // C# Pricing Batch API
+    createBatch,
+    initBatch,
+    getPendingRows,
+    getApprovedRows,
+    updateRow,
+    approveBatch,
+    publishBatch,
+    getLookup,
+    searchBatchRows,
     PYTHON_API,
     CSHARP_API,
   };
