@@ -69,7 +69,7 @@ export const PendingChanges = () => {
   
   // Lookup per filtri
   const [lookup, setLookup] = useState({ categorie: [], linee: [], marche: [] });
-  const [filters, setFilters] = useState({ categoria: '', linea: '', marca: '' });
+  const [filters, setFilters] = useState({ categoria: 'all', linea: 'all', marca: 'all' });
 
   // Carica lookup quando cambia lo store
   useEffect(() => {
@@ -225,7 +225,7 @@ export const PendingChanges = () => {
             <SelectValue placeholder="Categoria" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Tutte</SelectItem>
+            <SelectItem value="all">Tutte</SelectItem>
             {lookup.categorie.map(cat => (
               <SelectItem key={cat} value={cat}>{cat}</SelectItem>
             ))}
@@ -237,7 +237,7 @@ export const PendingChanges = () => {
             <SelectValue placeholder="Linea" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Tutte</SelectItem>
+            <SelectItem value="all">Tutte</SelectItem>
             {lookup.linee.map(lin => (
               <SelectItem key={lin} value={lin}>{lin}</SelectItem>
             ))}
@@ -249,7 +249,7 @@ export const PendingChanges = () => {
             <SelectValue placeholder="Marca" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Tutte</SelectItem>
+            <SelectItem value="all">Tutte</SelectItem>
             {lookup.marche.map(mar => (
               <SelectItem key={mar} value={mar}>{mar}</SelectItem>
             ))}
